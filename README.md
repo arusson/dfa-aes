@@ -102,7 +102,7 @@ python3 faultsimulator.py -r 9 -n 2 > round9_8pairs.txt
 The file `round9_8pairs.txt` contains 8 pairs of correct/faulty ciphertexts (two fault for each column in round 9). The fault positions and values are **unknown**. Then we run the command:
 
 ```bash
-./bin/dfa -9 -i examples/round9_8pairs.txt
+./dfa -9 -i round9_8pairs.txt
 ```
 
 The master key is found immediately.
@@ -116,7 +116,7 @@ python3 faultsimulator.py -r 9 --bitflip > round9_bitflip.txt
 The file `round9_bitflip.txt` contains 4 pairs of correct/faulty ciphertexts (one for each column in round 9), where fault are known to be **bitflips** (but the exact fault and locations are unknowns). We run the command:
 
 ```bash
-./bin/dfa -9 -b -i examples/round9_bitflip.txt
+./dfa -9 -b -i round9_bitflip.txt
 ```
 
 The analysis is a bit longer but should work in a few seconds.
@@ -129,10 +129,10 @@ The analysis is a bit longer but should work in a few seconds.
 python3 faultsimulator.py -r 8 -n 2 > round8_2pairs.txt
 ```
 
-The file `example_round8_2pairs.txt` contains two pairs of correct/faulty ciphertexts with **unknown** faults in round 8. We run the command
+The file `round8_2pairs.txt` contains two pairs of correct/faulty ciphertexts with **unknown** faults in round 8. We run the command
 
 ```bash
-./bin/dfa -8 -i examples/round8_2pairs.txt
+./dfa -8 -i round8_2pairs.txt
 ```
 
 The master key is found immediately.
@@ -148,7 +148,7 @@ The file `round8_keeppos.txt` contains a single pair of correct/faulty ciphertex
 Run the command
 
 ```bash
-./bin/dfa -8 -i examples/round8_keeppos.txt
+./dfa -8 -i round8_keeppos.txt
 ```
 
 Depending of the number of cores available and performance of the machine, it can take up to a few minutes as we expect around 4 billions keys to test.
@@ -161,13 +161,15 @@ Depending of the number of cores available and performance of the machine, it ca
 python3 faultsimulator.py -r 8 --keepfault > round8_keepfault.txt
 ```
 
-The file `example_round8_keepfault.txt` contains a single pair of correct/faulty ciphertexts. The position and fault are *known*.
+The file `round8_keepfault.txt` contains a single pair of correct/faulty ciphertexts. The position and fault are *known*.
 
 Run the command
 
 ```bash
-./bin/dfa -8 -i examples/round8_keepfault.txt
+./dfa -8 -i round8_keepfault.txt
 ```
+
+A speed-up of a factor of 16 can be expected compared to example 4 above (a few hundred millions candidates only).
 
 The master key should be found in a few seconds.
 
