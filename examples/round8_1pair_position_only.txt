@@ -1,0 +1,7 @@
+# masterkey: 1ebecd11d2961f455523b26c93f5ba50
+
+# pt:45bddd21cf4117e70732ae630b45b234
+# ct:8cccae2c4b362428cda37ce410890b80
+
+# pairs of good/faulty ciphertexts
+b21b5ad92ee9f3149823e6b18e2921d1,a0794d17b41a327a51cc5e7f9d69a307,12

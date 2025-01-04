@@ -1,8 +1,8 @@
-#include <string.h>
+#include <immintrin.h>
 #include <stdint.h>
 #include "aes.h"
 
-const byte sbox[256] = {
+const uint8_t sbox[256] = {
   0x63,0x7C,0x77,0x7B,0xF2,0x6B,0x6F,0xC5,0x30,0x01,0x67,0x2B,0xFE,0xD7,0xAB,0x76,
   0xCA,0x82,0xC9,0x7D,0xFA,0x59,0x47,0xF0,0xAD,0xD4,0xA2,0xAF,0x9C,0xA4,0x72,0xC0,
   0xB7,0xFD,0x93,0x26,0x36,0x3F,0xF7,0xCC,0x34,0xA5,0xE5,0xF1,0x71,0xD8,0x31,0x15,
@@ -21,7 +21,7 @@ const byte sbox[256] = {
   0x8C,0xA1,0x89,0x0D,0xBF,0xE6,0x42,0x68,0x41,0x99,0x2D,0x0F,0xB0,0x54,0xBB,0x16
 };
 
-const byte invsbox[256] = {
+const uint8_t invsbox[256] = {
   0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
   0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
   0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
@@ -40,88 +40,14 @@ const byte invsbox[256] = {
   0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
 };
 
-const byte rcon[10] = {1, 2, 4, 8, 16, 32, 64, 128, 27, 54};
+const uint8_t rcon[10] = {1, 2, 4, 8, 16, 32, 64, 128, 27, 54};
 
-word32 bytes_to_word(const byte a[4]) {
-  word32 b;
-  b = ((word32)a[0] << 24) | ((word32)a[1] << 16) |
-    ((word32)a[2] << 8) | (word32)a[3];
-  return b;
-}
+void mix_column(uint8_t a[4]) {
+  uint8_t t, u, v;
 
-void word_to_bytes(const word32 a, byte b[4]) {
-  b[0] = (byte)((a >> 24) & 0xff);
-  b[1] = (byte)((a >> 16) & 0xff);
-  b[2] = (byte)((a >> 8) & 0xff);
-  b[3] = (byte)(a & 0xff);
-}
-
-void subBytes(byte state[16]) {
-  int i;
-  for (i = 0; i < 16; i++) {
-    state[i] = sbox[state[i]];
-  }
-}
-
-void invSubBytes(byte state[16]) {
-  int i;
-  for (i = 0; i < 16; i++) {
-    state[i] = invsbox[state[i]];
-  }
-}
-
-void shiftRows(byte state[16]) {
-  byte tmp1, tmp2;
-  
-  tmp1 = state[1];
-  state[1] = state[5];
-  state[5] = state[9];
-  state[9] = state[13];
-  state[13] = tmp1;
-  
-  tmp1 = state[2];
-  tmp2 = state[6];
-  state[2] = state[10];
-  state[6] = state[14];
-  state[10] = tmp1;
-  state[14] = tmp2;
-
-  tmp1 = state[15];
-  state[15] = state[11];
-  state[11] = state[7];
-  state[7] = state[3];
-  state[3] = tmp1;
-}
-
-void invShiftRows(byte state[16]) {
-  byte tmp1, tmp2;
-  
-  tmp1 = state[13];
-  state[13] = state[9];
-  state[9] = state[5];
-  state[5] = state[1];
-  state[1] = tmp1;
-
-  tmp1 = state[2];
-  tmp2 = state[6];
-  state[2] = state[10];
-  state[6] = state[14];
-  state[10] = tmp1;
-  state[14] = tmp2;
-
-  tmp1 = state[3];
-  state[3] = state[7];
-  state[7] = state[11];
-  state[11] = state[15];
-  state[15] = tmp1;
-}
-
-void mixColumn(byte a[4]) {
-  byte t, u, v;
-  
   t = a[0] ^ a[1] ^ a[2] ^ a[3];
   u = a[0];
-  
+
   v = a[0] ^ a[1];
   v = XTIME(v);
   a[0] = a[0] ^ v ^ t;
@@ -133,116 +59,25 @@ void mixColumn(byte a[4]) {
   v = a[2] ^ a[3];
   v = XTIME(v);
   a[2] = a[2] ^ v ^ t;
-  
+
   v = a[3] ^ u;
   v = XTIME(v);
   a[3] = a[3] ^ v ^ t;
 }
 
-
-void mixColumns(byte state[16]) {
+void encrypt_aes(const uint8_t input[16], uint8_t output[16], const uint8_t subkeys[176]) {
   int i;
-  for (i = 0; i < 16; i += 4) {
-    mixColumn(&state[i]);
+  __m128i block = _mm_load_si128((const __m128i *)input);
+  __m128i subkey = _mm_load_si128((const __m128i *)subkeys);
+  block = _mm_xor_si128(block, subkey);
+
+  for (i = 1; i < 10; i++) {
+    subkey = _mm_load_si128((const __m128i *)(subkeys + 16*i));
+    block = _mm_aesenc_si128(block, subkey);
   }
-}
 
-void invMixColumn(byte a[4]) {
-  byte t, u, v;
+  subkey = _mm_load_si128((const __m128i *)(subkeys + 160));
+  block = _mm_aesenclast_si128(block, subkey);
 
-  /* preprocessing */
-  u = a[0] ^ a[2];
-  u = XTIME(u);
-  u = XTIME(u);
-  v = a[1] ^ a[3];
-  v = XTIME(v);
-  v = XTIME(v);
-  
-  a[0] = a[0] ^ u;
-  a[1] = a[1] ^ v;
-  a[2] = a[2] ^ u;
-  a[3] = a[3] ^ v;
-  
-  /* mix column */
-  t = a[0] ^ a[1] ^ a[2] ^ a[3];
-  u = a[0];
-  
-  v = a[0] ^ a[1];
-  v = XTIME(v);
-  a[0] = a[0] ^ v ^ t;
-
-  v = a[1] ^ a[2];
-  v = XTIME(v);
-  a[1] = a[1] ^ v ^ t;
-
-  v = a[2] ^ a[3];
-  v = XTIME(v);
-  a[2] = a[2] ^ v ^ t;
-  
-  v = a[3] ^ u;
-  v = XTIME(v);
-  a[3] = a[3] ^ v ^ t;
-}
-
-
-void invMixColumns(byte state[16]) {
-  int i;
-  for (i = 0; i < 16; i += 4) {
-    invMixColumn(&state[i]);
-  }
-}
-
-void keyExpansion(const byte masterkey[16], byte subkeys[176]) {
-  int i;
-  
-  for (i = 0; i < 16; i++) {
-    subkeys[i] = masterkey[i];
-  }
-  
-  for (i = 16; i < 176; i += 4) {
-    if (i % 16 == 0) {
-      subkeys[i]     = sbox[subkeys[i - 3]] ^ rcon[(i >> 4) - 1] ^ subkeys[i - 16];
-      subkeys[i + 1] = sbox[subkeys[i - 2]] ^ subkeys[i - 15];
-      subkeys[i + 2] = sbox[subkeys[i - 1]] ^ subkeys[i - 14];
-      subkeys[i + 3] = sbox[subkeys[i - 4]] ^ subkeys[i - 13];
-    }
-    else {
-      subkeys[i]     = subkeys[i - 16] ^ subkeys[i - 4];
-      subkeys[i + 1] = subkeys[i - 15] ^ subkeys[i - 3];
-      subkeys[i + 2] = subkeys[i - 14] ^ subkeys[i - 2];
-      subkeys[i + 3] = subkeys[i - 13] ^ subkeys[i - 1];
-    } 
-  }
-}
-
-void encrypt_aes(const byte input[16], byte output[16],
-                 const byte subkeys[176], const int NR) {
-  int i, round;
-  byte state[16];
-  
-  memcpy(state, input, 16);
-  
-  /* add the first round key */
-  for (i = 0; i < 16 ; i++) {
-    state[i] ^= subkeys[i];
-  }
-  
-  /* rounds 1 to 9 */
-  for (round = 1; round < NR; round++) {
-    subBytes(state);
-    shiftRows(state);
-    mixColumns(state);
-    for (i = 0; i < 16; i++) {
-      state[i] ^= subkeys[round*16 + i];
-    }
-  }
-  
-  /* last round */
-  subBytes(state);
-  shiftRows(state);
-  for (i = 0; i < 16; i++) {
-    state[i] ^= subkeys[160 + i];
-  }
-  
-  memcpy(output, state, 16);
+  _mm_store_si128((__m128i *)output, block);
 }

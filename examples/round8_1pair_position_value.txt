@@ -1,0 +1,7 @@
+# masterkey: 83bc414a8e27a0ea25665f8d268c2378
+
+# pt:75c3fcb3496904f4c8e94a6115c3b8cd
+# ct:36c9ac27bbfa7f1b8deac4dce61d010e
+
+# pairs of good/faulty ciphertexts
+350e6c0961a6cab97c19aff96e2ef395,b94fc5e1df1aa5b33346e596b2a0dbc0,15,176

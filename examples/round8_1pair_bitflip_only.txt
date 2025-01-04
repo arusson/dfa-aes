@@ -1,0 +1,7 @@
+# masterkey: 2f50b2fdc4bde60c7ecc0cbcc753d11e
+
+# pt:16fb27315335eacea348158824fe9e8d
+# ct:9c5da02db372e888c91d2f51440ee4a6
+
+# pairs of good/faulty ciphertexts
+e4cd6ff5627721dd555177c7910affaa,f7d4fbf040bbca81ef077598f3d00402,-1,b
