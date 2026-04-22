@@ -32,29 +32,25 @@ static uint8_t BITFLIP[256] = {
 };
 
 /**
- * Calculate the delta-set for a specific column in round 9.
+ * Calculate the delta-set for a specific column in round 9 (encryption) or round 1 (decryption).
  *
- * A fault in round 8 has an impact on four bytes in round 9.
+ * A fault in round 8 has an impact on four bytes in round 9 (or a fault in round 2 has an impact
+ * on four bytes in round 1 for decryption mode).
  * For each of those, the analysis can be performed as if the fault occurred there.
- * The "fault" in round 9 can be any of 255 possible values.
- * However, if the fault in round 8 is precisely known, it can be limited
- * to 127 "fault" values.
+ * The "fault" in round 9 (or round 1) can be any of 255 possible values.
+ * However, if the fault in round 8 is precisely known, it can be limited to 127 "fault" values.
  *
  * inputs:
- * - col8: if known, the column where the fault occurred in round 8
- * - col9: column of round 9, useful only to know which row is affected
- *         when the fault position in round 8 is known
- * - diff_col: output of mix column of the specific fault in round 8 if known
- * - diff_mc_list: the delta-set
+ * - col8: if known, the column where the fault occurred in round 8 (or round 2)
+ * - col9: column of round 9 (or round 1), useful only to know which row is affected
+ *         when the fault position in round 8 (or round 2) is known
+ * - diff_col: output of mix column of the specific fault in round 8 (or round 2) if known
+ * - delta_set: the delta-set
  *
  * output: length of the delta-set
  */
-static int r8_get_diff_mc(
-  const int col8,
-  const int col9,
-  const uint32_t diff_col,
-  uint32_t diff_mc_list[DIFF_MC_MAX]
-) {
+static int r2_r8_get_delta_set(const int col8, const int col9, const uint32_t diff_col,
+                               const bool decrypt, uint32_t delta_set[DELTA_SET_MAX]) {
   int i, c1, c2, diff, len;
   int fault_list[255];
   int fault_list_len = 0;
@@ -63,18 +59,48 @@ static int r8_get_diff_mc(
   /* if fault position is known */
   if (col8 != -1) {
     row9 = (col8 + 3*col9) % 4;
+    if (decrypt == true) {
+      row9 = (4 - row9) % 4;
+    }
   }
 
   /* case 1: fault in round 8 is known */
   if (diff_col != 0) {
     diff = (int)TAKEBYTE(diff_col, row9);
-    for (c1 = 1; c1 < 255; c1++) {
-      c2 = diff ^ c1;
-      if (c1 > c2) {
-        continue;
+
+    if (decrypt == true) {
+      /**
+       * If (a < b < c < d)
+       *    and (a XOR b = c XOR d)
+       *    and (invsbox[a] XOR invsbox[b] = invsbox[c] XOR sbox[d])
+       * then one of a, b, c or d is sbox[0] = 0x63.
+       * This is used to remove duplicates in fault list.
+       */
+      for (c1 = 0; c1 < 255; c1++) {
+        c2 = diff ^ c1;
+        if (c1 > c2 || c1 == 99 || c2 == 99 ) {
+          continue;
+        }
+        fault_list[fault_list_len++] = (int)(invsbox[c1] ^ invsbox[c2]);
       }
-      /* fault_list_len = 127 */
-      fault_list[fault_list_len++] = (int)(sbox[c1] ^ sbox[c2]);
+    }
+    else {
+      /**
+       * If (a < b < c < d)
+       *    and (a XOR b = c XOR d)
+       *    and (sbox[a] XOR sbox[b] = sbox[c] XOR sbox[d])
+       * then a = 0.
+       * So c1 starts from 1 and c2 = 0 is avoided since c1 > c2 must be satisfied.
+       * This is used to remove duplicates in fault list.
+       */
+      for (c1 = 1; c1 < 255; c1++) {
+        c2 = diff ^ c1;
+        if (c1 > c2) {
+          continue;
+        }
+        /* fault_list_len = 127 */
+        fault_list[fault_list_len++] = (int)(sbox[c1] ^ sbox[c2]);
+      }
     }
   }
   /* case 2: unknown fault */
@@ -86,7 +112,7 @@ static int r8_get_diff_mc(
   }
 
   /* construct the delta-set */
-  len = get_diff_mc(row9, fault_list, fault_list_len, diff_mc_list);
+  len = get_delta_set(row9, fault_list, fault_list_len, decrypt, delta_set);
 
   return len;
 }
@@ -95,34 +121,38 @@ static int r8_get_diff_mc(
  * Calculate candidates for a ciphertext pair.
  *
  * inputs:
- * - pair: ciphertext pair
- * - row8 and col8: position of the fault in round 8 if known
- * - candidates: lists of candidates for each diagonal of the last round key
+ * - pair: ciphertext (or plaintext) pair
+ * - row8 and col8: position of the fault in round 8 if known (or round 2 for decryption mode)
+ * - decrypt: Boolean for decryption mode
+ * - candidates: lists of candidates for each diagonal of the last round key (or masterkey for
+ *               decryption mode)
  * - candidates_len: lengths of each list of candidates
  */
-static void r8_find_candidates(
-  const pair_t *pair,
-  const int row8,
-  const int col8,
-  uint32_t candidates[4][CAND_MAX],
-  int candidates_len[4]
-) {
+static void r2_r8_find_candidates(const pair_t *pair, const int row8, const int col8,
+                                  const bool decrypt, uint32_t candidates[4][CAND_MAX],
+                                  int candidates_len[4]) {
   uint8_t tmp[4] = {0, 0, 0, 0};
   int col9, len;
-  uint32_t diff_mc_list[DIFF_MC_MAX];
+  uint32_t delta_set[DELTA_SET_MAX];
   uint32_t diff_col = 0;
 
   /* fault position and value known (used to reduce the delta-set) */
   if (row8 != -1 && col8 != -1 && pair->fault_value != -1) {
     tmp[row8] = pair->fault_value;
-    mix_column(tmp);
+    if (decrypt == true) {
+      inv_mix_column(tmp);
+    }
+    else {
+      mix_column(tmp);
+    }
     diff_col = BYTES_TO_WORD(tmp);
   }
 
   /* get delta-set for each column in round 9, then get candidates for corresponding diagonals */
   for (col9 = 0; col9 < 4; col9++) {
-    len = r8_get_diff_mc(col8, col9, diff_col, diff_mc_list);
-    candidates_len[col9] = k10_cand_from_diff_mc(pair, col9, diff_mc_list, len, candidates[col9]);
+    len = r2_r8_get_delta_set(col8, col9, diff_col, decrypt, delta_set);
+    candidates_len[col9] = roundkey_candidates_from_delta_set(pair, col9, decrypt, delta_set, len,
+                                                              candidates[col9]);
   }
 }
 
@@ -144,15 +174,11 @@ static void r8_find_candidates(
  *
  * If a known plaintext/ciphertext is known, the key will be tested with an encryption.
  */
-static int r8_exhaustive_search(
-  const pair_t *pair,
-  const int row8,
-  const int col8,
-  const uint32_t candidates[4][CAND_MAX],
-  const int candidates_len[4],
-  const known_pt_t *known_pt,
-  uint8_t masterkeys[][16]
-) {
+static int r8_exhaustive_search_encryption(const pair_t *pair, const int row8, const int col8,
+                                           const uint32_t candidates[4][CAND_MAX],
+                                           const int candidates_len[4],
+                                           const known_pt_ct_t *known_pt_ct,
+                                           uint8_t masterkeys[][16]) {
   int i, j, k, l, ii;
   int found = 0;
   int nkeys = 0;
@@ -214,6 +240,7 @@ static int r8_exhaustive_search(
           y = _mm_aesdec_si128(y, k);
 
           /* decrypt round 9 */
+          /* (round key is arbitrary since blocks are XORed) */
           x = _mm_aesdec_si128(x, k);
           y = _mm_aesdec_si128(y, k);
 
@@ -261,9 +288,9 @@ static int r8_exhaustive_search(
 
           /* very few candidates expected to reach this place */
           reverse_key_expansion(subkey10, subkeys);
-          if (known_pt->is_some) {
-            encrypt_aes(known_pt->pt, ctcmp, subkeys);
-            if (memcmp(known_pt->ct, ctcmp, 16) == 0) {
+          if (known_pt_ct->is_some) {
+            encrypt_aes(known_pt_ct->pt, ctcmp, subkeys);
+            if (memcmp(known_pt_ct->ct, ctcmp, 16) == 0) {
 #ifdef _OPENMP
 #pragma omp critical
 #endif
@@ -291,20 +318,176 @@ static int r8_exhaustive_search(
   return nkeys;
 }
 
-/**
- * Main function for key recovery with a single ciphertext pair
- * with a fault in round 8.
+/** 
+ * Run an exhaustive search for the masterkey.
+ * 
+ * A filtering is applied to check if a round key is consistent with the fault:
+ * the difference of states in round 2 before inverse mix column must have a single non-null byte;
+ * if the fault position is known, then this byte must be on the same position; if the fault is
+ * known, it must be the same as the fault value.
  *
- * Run the analysis to find candidates for each diagonal, then run
- * an exhaustive search with filtering, with or without a known plaintext.
+ * This search is made with the hypothesis that the fault occurred in column `col8`
+ * (this function is called four times if the fault position is unknown).
+ *
+ * If the fault position is known, the number of candidates should be reduced from 2^32 
+ * to around 2^8.
+ * If the fault position and value are known, the number of candidates shoud be very close to one.
+ *
+ * If a known plaintext/ciphertext is known, the key will be tested with an encryption.
  */
-static int r8_key_recovery_single_ct(
-  const pair_t *pair,
-  const int row8,
-  const int col8,
-  const known_pt_t *known_pt,
-  uint8_t masterkeys[][16]
-) {
+static int r8_exhaustive_search_decryption(const pair_t *pair, const int row8, const int col8,
+                                           const uint32_t candidates[4][CAND_MAX],
+                                           const int candidates_len[4],
+                                           const known_pt_ct_t *known_pt_ct,
+                                           uint8_t masterkeys[][16]) {
+  int i, j, k, l, ii;
+  int found = 0;
+  int nkeys = 0;
+  int row = row8;
+  alignas(16) uint32_t diff32[4];
+  uint32_t masks[4] = {0xffffff00, 0xffff00ff, 0xff00ffff, 0x00ffffff};
+  uint8_t masterkey[16];
+  alignas(16) uint8_t subkey1[16];
+  uint8_t subkeys[176];
+  alignas(16) uint8_t pttmp[16];
+  alignas(16) uint8_t fpttmp[16];
+  alignas(16) uint8_t ctcmp[16];
+
+#ifdef _OPENMP
+#pragma omp parallel for firstprivate(row,masks) private(j,k,l,ii,masterkey,subkey1,subkeys,pttmp,fpttmp,ctcmp,diff32) shared(found,nkeys)
+#endif
+  for (i = 0; i < candidates_len[0]; i++) {
+    if (found) {
+      /* abort search for each threads */
+      continue;
+    }
+    masterkey[0]  = TAKEBYTE(candidates[0][i], 0);
+    masterkey[5]  = TAKEBYTE(candidates[0][i], 1);
+    masterkey[10] = TAKEBYTE(candidates[0][i], 2);
+    masterkey[15] = TAKEBYTE(candidates[0][i], 3);
+
+    for (j = 0; j < candidates_len[1]; j++) {
+      masterkey[4]  = TAKEBYTE(candidates[1][j], 0);
+      masterkey[9]  = TAKEBYTE(candidates[1][j], 1);
+      masterkey[14] = TAKEBYTE(candidates[1][j], 2);
+      masterkey[3]  = TAKEBYTE(candidates[1][j], 3);
+
+      for (k = 0; k < candidates_len[2]; k++) {
+        masterkey[8]  = TAKEBYTE(candidates[2][k], 0);
+        masterkey[13] = TAKEBYTE(candidates[2][k], 1);
+        masterkey[2]  = TAKEBYTE(candidates[2][k], 2);
+        masterkey[7]  = TAKEBYTE(candidates[2][k], 3);
+
+        for (l = 0; l < candidates_len[3]; l++) {
+          masterkey[12] = TAKEBYTE(candidates[3][l], 0);
+          masterkey[1]  = TAKEBYTE(candidates[3][l], 1);
+          masterkey[6]  = TAKEBYTE(candidates[3][l], 2);
+          masterkey[11] = TAKEBYTE(candidates[3][l], 3);
+
+          /* xor last round key (optimized as vpxor by the compiler) */
+          for (ii = 0; ii < 16; ii++) {
+            pttmp[ii]  = pair->ct[ii]  ^ masterkey[ii];
+            fpttmp[ii] = pair->fct[ii] ^ masterkey[ii];
+          }
+
+          k1_from_masterkey(masterkey, subkey1);
+
+          /* encrypt first round */
+          __m128i k = _mm_load_si128((const __m128i *)subkey1);
+          __m128i x = _mm_load_si128((const __m128i *)pttmp);
+          __m128i y = _mm_load_si128((const __m128i *)fpttmp);
+          x = _mm_aesenc_si128(x, k);
+          y = _mm_aesenc_si128(y, k);
+
+          /* encrypt second round */
+          /* (round key is arbitrary since blocks are XORed) */
+          x = _mm_aesenc_si128(x, k);
+          y = _mm_aesenc_si128(y, k);
+
+          /* xor of states of ciphertext pair before mix column in round 8 */
+          x = _mm_xor_si128(x, y);
+          _mm_store_si128((__m128i *)diff32, x);
+
+          /* first filter: the column must have a single non-null byte */
+          /* case fault position known */
+          if (row8 != -1) {
+            if ((diff32[col8] & masks[row8]) != 0) {
+              continue;
+            }
+          }
+          /* case fault position unknown */
+          else {
+            if ((diff32[col8] & masks[0]) == 0) {
+              row = 0;
+            }
+            else if ((diff32[col8] & masks[1]) == 0) {
+              row = 1;
+            }
+            else if ((diff32[col8] & masks[2]) == 0) {
+              row = 2;
+            }
+            else if ((diff32[col8] & masks[3]) == 0) {
+              row = 3;
+            }
+            else {
+              continue;
+            }
+          }
+
+          /* second filter: the non-null byte must correspond to the fault (if known) */
+          if (pair->fault_value != -1) {
+            if (((int)(diff32[col8] >> row*8) & 0xff) != pair->fault_value) {
+              continue;
+            }
+          }
+          else if (pair->bitflip == true) {
+            if (BITFLIP[(diff32[col8] >> row*8) & 0xff] == 0) {
+              continue;
+            }
+          }
+
+          /* very few candidates expected to reach this place */
+          key_expansion(masterkey, subkeys);
+          if (known_pt_ct->is_some) {
+            encrypt_aes(known_pt_ct->pt, ctcmp, subkeys);
+            if (memcmp(known_pt_ct->ct, ctcmp, 16) == 0) {
+#ifdef _OPENMP
+#pragma omp critical
+#endif
+              {
+                memcpy(masterkeys[nkeys], masterkey, 16);
+                found = 1;
+                nkeys = 1;
+              }
+            }
+          }
+          else {
+#ifdef _OPENMP
+#pragma omp critical
+#endif
+            {
+              memcpy(masterkeys[nkeys], masterkey, 16);
+              nkeys++;
+            }
+          }
+        } /* end for l */
+      } /* end for k */
+    } /* end for j */
+  } /* end for i */
+
+  return nkeys;
+}
+
+/**
+ * Main function for key recovery with a single ciphertext pair with a fault in round 8 (encryption)
+ * or round 2 (decryption).
+ *
+ * Run the analysis to find candidates for each diagonal, then run an exhaustive search with
+ * filtering, with or without a known plaintext.
+ */
+static int r2_r8_key_recovery_single_ct(const pair_t *pair, const int row8, const int col8,
+                                        const known_pt_ct_t *known_pt_ct, const bool decrypt,
+                                        uint8_t masterkeys[][16]) {
   int i;
   int candidates_len[4];
   int nkeys = 0;
@@ -312,25 +495,23 @@ static int r8_key_recovery_single_ct(
   uint32_t candidates[4][CAND_MAX];
 
   /* get candidates for each diagonal of last round key */
-  r8_find_candidates(pair, row8, col8, candidates, candidates_len);
+  r2_r8_find_candidates(pair, row8, col8, decrypt, candidates, candidates_len);
   nb_cand = 1;
   for (i = 0; i < 4; i++) {
     nb_cand *= (long)candidates_len[i];
   }
 
   if (pair->fault_value != -1) {
-    fprintf(
-      stderr,
-      "[*] Hypothesis: fault in column %d and fault is '0x%02x'\n",
-      col8, pair->fault_value
-    );
+    fprintf(stderr,
+            "[*] Hypothesis: fault in column %d and fault is '0x%02x'\n",
+            col8, pair->fault_value);
   }
   else {
     fprintf(stderr, "[*] Hypothesis: fault in column %d and fault is unknown\n", col8);
   }
 
-  print_number_candidates(candidates_len, nb_cand);
-  if (known_pt->is_some) {
+  print_number_candidates(candidates_len, nb_cand, decrypt);
+  if (known_pt_ct->is_some) {
     fprintf(stderr, "[*] Filtering (followed by known plaintext validation)\n");
   }
   else {
@@ -339,9 +520,14 @@ static int r8_key_recovery_single_ct(
 
   /* final search */
   if (nb_cand > 0) {
-    nkeys = r8_exhaustive_search(
-      pair, row8, col8, candidates, candidates_len, known_pt, &masterkeys[nkeys]
-    );
+    if (decrypt == true) {
+      nkeys = r8_exhaustive_search_decryption(pair, row8, col8, candidates, candidates_len,
+                                           known_pt_ct, &masterkeys[nkeys]);
+    }
+    else {
+      nkeys = r8_exhaustive_search_encryption(pair, row8, col8, candidates, candidates_len, known_pt_ct,
+                                   &masterkeys[nkeys]);
+    }
   }
 
   fprintf(stderr, "[*] Number of keys after filtering: %d\n", nkeys);
@@ -350,15 +536,12 @@ static int r8_key_recovery_single_ct(
 }
 
 /*
- * In case of several ciphertext pairs, we only do intersections of candidates
- * followed by an exhaustive search common with round 9.
+ * In case of several ciphertext pairs (or plaintext pairs), we only do intersections
+ * of candidates followed by an exhaustive search common with round 9 (or round 1).
  */
-static int r8_key_recovery_multiple_ct(
-  const pair_t pairs[PAIRS_MAX],
-  const int npairs,
-  const known_pt_t *known_pt,
-  uint8_t masterkeys[KEYS_MAX][16]
-) {
+static int r2_r8_key_recovery_multiple_ct(const pair_t pairs[PAIRS_MAX], const int npairs,
+                                          const known_pt_ct_t *known_pt_ct, const bool decrypt,
+                                          uint8_t masterkeys[KEYS_MAX][16]) {
   int i, j;
   int cand_tmp_len[4], candidates_len[4];
   int row8 = -1;
@@ -368,15 +551,15 @@ static int r8_key_recovery_multiple_ct(
   uint32_t candidates[4][CAND_MAX];
   uint32_t cand_tmp[4][CAND_MAX];
 
-  /* first we get candidates for a faulty ciphertext */
+  /* first we get candidates for a faulty ciphertext (or plaintext) */
   if (pairs[0].fault_pos >= 0 && pairs[0].fault_pos < 16) {
     row8 = pairs[0].fault_pos % 4;
     col8 = pairs[0].fault_pos / 4;
   }
 
-  r8_find_candidates(&pairs[0], row8, col8, candidates, candidates_len);
+  r2_r8_find_candidates(&pairs[0], row8, col8, decrypt, candidates, candidates_len);
 
-  /* we reduce the candidates with other pairs (ct,fct) */
+  /* we reduce the candidates with other pairs (ct,fct) (or (pt, fpt)) */
   for (i = 1; i < npairs; i++) {
     row8 = -1;
     col8 = -1;
@@ -386,7 +569,7 @@ static int r8_key_recovery_multiple_ct(
       col8 = pairs[i].fault_pos / 4;
     }
 
-    r8_find_candidates(&pairs[i], row8, col8, cand_tmp, cand_tmp_len);
+    r2_r8_find_candidates(&pairs[i], row8, col8, decrypt, cand_tmp, cand_tmp_len);
 
     /* intersection with previous candidates */
     for (j = 0; j < 4; j++) {
@@ -399,35 +582,37 @@ static int r8_key_recovery_multiple_ct(
     nb_cand *= (long int)candidates_len[i];
   }
 
-  print_number_candidates(candidates_len, nb_cand);
+  print_number_candidates(candidates_len, nb_cand, false);
 
   if (nb_cand > 0) {
-    nkeys = exhaustive_search(candidates, candidates_len, known_pt, masterkeys);
+    if (decrypt == true) {
+      nkeys = exhaustive_search_decryption(candidates, candidates_len, known_pt_ct, masterkeys);
+    }
+    else {
+      nkeys = exhaustive_search_encryption(candidates, candidates_len, known_pt_ct, masterkeys);
+    }
   }
   return nkeys;
 }
 
 /**
- * Main function for key recovery with a fault in round 8.
- * Depending of the number of ciphertext pairs, it will call one
+ * Main function for key recovery with a fault in round 8 (encryption) or round 2 (decryption).
+ * 
+ * Depending of the number of ciphertext pairs (or plaintext pairs), it will call one
  * of the previous functions.
  *
- * For a single ciphertext pair:
+ * For a single ciphertext pair (or plaintext pair):
  * - if the fault is unknown, the key recovery will be attempted four times
  *   (one for each assumption for the column where the fault occurred)
  * - if the fault is a bitflip, it will be performed for each of the eight bit positions
  * - if the fault position and value are known: a single key recovery.
  *
  * The last one should give a result very fast.
- * For the other cases, it depends of the number of cores available,
- * but it can be less than a minute for an unknown position and value.
+ * For the other cases, it depends of the number of cores available, but it can be less
+ * than a minute for an unknown position and value.
  */
-int r8_key_recovery(
-  pair_t pairs[PAIRS_MAX],
-  const int npairs,
-  const known_pt_t *known_pt,
-  uint8_t masterkeys[KEYS_MAX][16]
-) {
+int r2_r8_key_recovery(pair_t pairs[PAIRS_MAX], const int npairs, const known_pt_ct_t *known_pt_ct,
+                       const bool decrypt, uint8_t masterkeys[KEYS_MAX][16]) {
   pair_t *pair;
   int bit, col8;
   int row8 = -1;
@@ -437,12 +622,12 @@ int r8_key_recovery(
 
   /* processing multiple ciphertext pairs */
   if (npairs > 1) {
-    return r8_key_recovery_multiple_ct(pairs, npairs, known_pt, masterkeys);
+    return r2_r8_key_recovery_multiple_ct(pairs, npairs, known_pt_ct, decrypt, masterkeys);
   }
 
   /* processing a single ciphertext pair */
   pair = &pairs[0];
-  fprintf(stderr, "[*] Processing a single ciphertext pair:\n");
+  fprintf(stderr, "[*] Processing a single ciphertext (or plaintext) pair:\n");
   print_pair_info(pair);
 
   /* get column where the fault occurred if known */
@@ -461,15 +646,17 @@ int r8_key_recovery(
     if (pair->bitflip == true && pair->fault_pos != -1) {
       for (bit = 1; bit < 256; bit <<= 1) {
         pair->fault_value = bit;
-        nkeys += r8_key_recovery_single_ct(pair, row8, col8, known_pt, &masterkeys[nkeys]);
-        if (known_pt->is_some && nkeys == 1) {
+        nkeys += r2_r8_key_recovery_single_ct(pair, row8, col8, known_pt_ct, decrypt,
+                                              &masterkeys[nkeys]);
+        if (known_pt_ct->is_some && nkeys == 1) {
           goto found;
         }
       }
     }
     else {
-      nkeys += r8_key_recovery_single_ct(pair, row8, col8, known_pt, &masterkeys[nkeys]);
-      if (known_pt->is_some && nkeys == 1) {
+      nkeys += r2_r8_key_recovery_single_ct(pair, row8, col8, known_pt_ct, decrypt,
+                                            &masterkeys[nkeys]);
+      if (known_pt_ct->is_some && nkeys == 1) {
         goto found;
       }
     }

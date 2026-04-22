@@ -40,8 +40,6 @@ const uint8_t invsbox[256] = {
   0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
 };
 
-const uint8_t rcon[10] = {1, 2, 4, 8, 16, 32, 64, 128, 27, 54};
-
 void mix_column(uint8_t a[4]) {
   uint8_t t, u, v;
 
@@ -65,6 +63,159 @@ void mix_column(uint8_t a[4]) {
   a[3] = a[3] ^ v ^ t;
 }
 
+void inv_mix_column(uint8_t a[4]) {
+  uint8_t u, v;
+
+  /* preprocessing */
+  u = a[0] ^ a[2];
+  u = XTIME(u);
+  u = XTIME(u);
+  v = a[1] ^ a[3];
+  v = XTIME(v);
+  v = XTIME(v);
+  a[0] ^= u;
+  a[1] ^= v;
+  a[2] ^= u;
+  a[3] ^= v;
+
+  mix_column(a);
+}
+
+/**
+ * Macro for key expansion using aeskeygenassist.
+ *
+ * We start with a round key k
+ *     k = (w0, w1, w2, w3)
+ * 
+ * After aeskeygenassist we have :
+ *     assist = (..., ..., ..., RotWord(SubWord(w3)) XOR rcon)
+ * 
+ * Followed by shuffle:
+ *     assist <- (w3', w3', w3', w3') where w3' = RotWord(SubWord(w3) XOR rcon)
+ * 
+ * Starting again from k, we construct with successive shifts and XOR:
+ *     k <- (w0, w1, w2, w3) XOR (0, w0, w1, w2) XOR (0, 0, w0, w1) XOR (0, 0, 0, w0)    
+ *        = (w0, w0 + w1, w0 + w1 + w2, w0 + w1 + w2 + w3)
+ * 
+ * Finally, we calculate k XOR assist:
+ *     k XOR assists = (w4, w5, w6, w7)
+ *                   = (w0 + w3',
+ *                      w0 + w1 + w3',
+ *                      w0 + w1 + w2 + w3',
+ *                      w0 + w1 + w2 + w3 + w3')
+ * 
+ * And we have:
+ *     w4 = w0 + w3'                = w0 + RotWord(SubWord(w3)) XOR rcon
+ *     w5 = w0 + w1 + w3'           = w1 + w4
+ *     w6 = w0 + w1 + w2 + w3'      = w2 + w5
+ *     w7 = w0 + w1 + w2 + w3 + w3' = w3 + w6
+ * 
+ * Which is the next round key.
+ */
+#define KEY_EXPAND(RCON, ADDR) do {                            \
+  assist = _mm_aeskeygenassist_si128(k, (RCON));               \
+  assist = _mm_shuffle_epi32(assist, _MM_SHUFFLE(3, 3, 3, 3)); \
+  k = _mm_xor_si128(k, _mm_slli_si128(k, 4));                  \
+  k = _mm_xor_si128(k, _mm_slli_si128(k, 4));                  \
+  k = _mm_xor_si128(k, _mm_slli_si128(k, 4));                  \
+  k = _mm_xor_si128(k, assist);                                \
+  _mm_store_si128((__m128i *)(ADDR), k);                       \
+} while (0)
+
+void key_expansion(const uint8_t masterkey[16], uint8_t subkeys[176]) {
+  __m128i assist;
+  __m128i k = _mm_load_si128((const __m128i *)masterkey);
+
+  _mm_store_si128((__m128i *)&subkeys[0], k);
+  KEY_EXPAND(1,   &subkeys[16]);
+  KEY_EXPAND(2,   &subkeys[32]);
+  KEY_EXPAND(4,   &subkeys[48]);
+  KEY_EXPAND(8,   &subkeys[64]);
+  KEY_EXPAND(16,  &subkeys[80]);
+  KEY_EXPAND(32,  &subkeys[96]);
+  KEY_EXPAND(64,  &subkeys[112]);
+  KEY_EXPAND(128, &subkeys[128]);
+  KEY_EXPAND(27,  &subkeys[144]);
+  KEY_EXPAND(54,  &subkeys[160]);
+}
+
+/**
+ * Reconstruct the first round key from the master key
+ */
+void k1_from_masterkey(const uint8_t masterkey[16], uint8_t subkey1[16]) {
+  __m128i assist;
+  __m128i k = _mm_load_si128((const __m128i *)masterkey);
+  KEY_EXPAND(1, subkey1);
+}
+
+/**
+ * Macro for key reverse expansion with aeskeygenassist
+ *
+ * We start with a round key:
+ *     k = (w4, w5, w6, w7)
+ * 
+ * We shift k:
+ *     assist = (0, w4, w5, w6)
+ * 
+ * We XOR k and assist:
+ *     assist <- k XOR assist
+ *             = (w4, w4 + w5, w5 + w6, w6 + w7)
+ *             = (w4,      w1,      w2,      w3)
+ * 
+ * We apply aeskeygenassist on it:
+ *     assist <- (..., ..., ..., w3') with w3' = RotWord(SubWord(w3)) XOR rcon
+ * 
+ * We shift assist to the left:
+ *     assist <- (w3', 0, 0, 0)
+ * 
+ * Finally, we calculate k XOR assist:
+ *     k XOR assist = (w3' + w4, w1, w2, w3)
+ *                  = (w0, w1, w2, w3)
+ * 
+ * Which is the previous round key.
+ */
+#define KEY_EXPAND_REVERSE(RCON, ADDR) do {      \
+  assist = _mm_slli_si128(k, 4);                 \
+  k = _mm_xor_si128(k, assist);                  \
+  assist = _mm_aeskeygenassist_si128(k, (RCON)); \
+  assist = _mm_srli_si128(assist, 12);           \
+  k = _mm_xor_si128(k, assist);                  \
+  _mm_store_si128((__m128i *)(ADDR), k);         \
+} while (0)
+
+/**
+ * Reconstruct the AES round keys from the last one
+ */
+void reverse_key_expansion(const uint8_t subkey10[16], uint8_t subkeys[176]) {
+  __m128i assist;
+  __m128i k = _mm_loadu_si128((const __m128i *)subkey10);
+
+  _mm_store_si128((__m128i *)&subkeys[160], k);
+  KEY_EXPAND_REVERSE(54,  &subkeys[144]);
+  KEY_EXPAND_REVERSE(27,  &subkeys[128]);
+  KEY_EXPAND_REVERSE(128, &subkeys[112]);
+  KEY_EXPAND_REVERSE(64,  &subkeys[96]);
+  KEY_EXPAND_REVERSE(32,  &subkeys[80]);
+  KEY_EXPAND_REVERSE(16,  &subkeys[64]);
+  KEY_EXPAND_REVERSE(8,   &subkeys[48]);
+  KEY_EXPAND_REVERSE(4,   &subkeys[32]);
+  KEY_EXPAND_REVERSE(2,   &subkeys[16]);
+  KEY_EXPAND_REVERSE(1,   &subkeys[0]);
+}
+
+/**
+ * Reconstruct the penultimate round key from the last one
+ */
+void k9_from_k10(const uint8_t subkey10[16], uint8_t subkey9[16]) {
+  __m128i assist;
+  __m128i k = _mm_loadu_si128((const __m128i *)subkey10);
+  KEY_EXPAND_REVERSE(54, subkey9);
+
+}
+
+/**
+ * AES encryption using AES-NI.
+ */
 void encrypt_aes(const uint8_t input[16], uint8_t output[16], const uint8_t subkeys[176]) {
   int i;
   __m128i block = _mm_load_si128((const __m128i *)input);

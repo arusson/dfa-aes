@@ -1,20 +1,31 @@
 # Differential Fault Analysis on AES
 
-This program implements the DFA attack on AES-128 from pairs of correct and faulty ciphertexts.
-Two cases are supported:
+This program implements the DFA attack on AES-128 from pairs of correct and faulty ciphertexts or from a pair correct and faulty plaintexts.
+Four cases are supported:
 
-* Faults made on the 8th round;
-* Faults made on the 9th round.
+* Faults made on the **8th round** during **encryption**;
+* Faults made on the **9th round** during **encryption**;
+* Faults made on the **1st round** during **decryption**;
+* Faults made on the **2nd round** during **decryption**.
 
 For each case, it is possible to specify the *fault location* and/or the *fault value*.
 
-In the case of the fault in the **8th round**, this program is very **efficient** for key recovery with a **single fault**:
+In the case of the fault in the **8th round** of an encryption (or **2nd round** of a decryption), this program is very **efficient** for key recovery with a **single fault**:
 depending of the assumption on the fault, it can find the key immediately, or in less than a minute if nothing is known.
 
-## Update 2025.01.04 (version 1.0)
+## Updates
+
+### Update 2026.04.22 (version 1.1)
+
+The DFA attack has been extended to the decryption case.
+A few improvements have also been added for key scheduling using AES-NI instructions.
+
+Added versioning.
+
+### Update 2025.01.04 (version 1.0)
 
 A lot of changes has been made:
-- use os **AES-NI** instructions to reduce drastically the cost (now, a few seconds can suffice to find a key with a single ciphertext pair for the 8th round fault);
+- use of **AES-NI** instructions to reduce drastically the cost (now, a few seconds can suffice to find a key with a single ciphertext pair for the 8th round fault);
 - known plaintext/ciphertext is **optional**;
 - a bitflip fault can be specified **without the fault position** (pretty useful with a single fault in round 8 as it reduces the number of key candidates to a handful);
 - the input file format has been slightly changed (it can contain comments and indication of known plaintext/ciphertext is clearly separated from the declaration of ciphertext pairs).
@@ -23,7 +34,12 @@ The introduction of AES-NI instructions is based on the suggestion by [shuffle2]
 
 ## Overview
 
-The differential fault analysis goal is to find the last AES round key (from which the master key can be reconstituted by reversing the key schedule).
+The goal of differential fault analysis is to recover the master key.
+Below is given an explanation of the case a fault occurs during an encryption.
+The attack is similar for a fault during an encryption.
+
+For an attack on encryption, the goal is to find the last AES round key (from which the master key
+can be reconstituted by reversing the key schedule).
 
 It can be split in four chunks:
 ```
@@ -41,7 +57,7 @@ This part of the analysis is instantaneous.
 
 In the case of the 8th round fault, a filtering is applied after this first analysis.
 It consists of checking the consistency between a candidate for the last round key and the fault:
-the decryption is applied up to the eight round for both good and faulty ciphertexts, and the difference (XOR) of the states is compared from what shoud be procuded by the fault (it must have a single non-null byte, then the position and value must agree on the assumption on the fault).
+the decryption is applied up to the eight round for both good and faulty ciphertexts, and the difference (XOR) of the states is compared from what should be produced by the fault (it must have a single non-null byte, then the position and value must agree on the assumption on the fault).
 
 This reduces the number of candidates for the last round key without the knowledge of plaintext.
 For example, if there are $2^8$ candidates for each chunk of the last round key, then there are ${(2^8)}^4=2^{32}$ candidates for the whole key.
@@ -51,11 +67,10 @@ After the filtering, we can expect around:
 - around $2^4$ keys if the fault position is known and its value is a bitflip;
 - around 2 keys if the fault position and value are known.
 
-This filtering needs to combine the four chunks of the last round key, so it goes through all combination.
+This filtering needs to combine the four chunks of the last round key, so it goes through all combinations.
 Therefore, this is the more costly part (it contains AES-NI instructions for efficiency).
 
 Of course, if a known plaintext/ciphertext is provided, a further check is made with an encryption, but only if those previous steps have been successfully completed.
-
 
 > (*): actually, in this case the filtering is applied four times, with an hypothesis that the fault occurred in each column, so overall the filtering is applied on 16 billions keys (which is still very fast thanks to the improvement of this implementation).
 
@@ -166,6 +181,20 @@ python3 faultsimulator.py -r 8 > sample.txt
 The optional arguments are the same except that `-n N` generates `N` pairs of correct/faulty ciphertexts.
 
 The master key is kept as a comment.
+
+Similarly, faults can be simulated on a decryption during round 1 or round 2.
+
+To generate 4 pairs of correct/faulty plaintext with a random key and faults in round 1:
+
+```bash
+python3 faultsimulator.py -r 1 > sample.txt
+```
+
+To generate one pair of correct/faulty plaintext with a random key and a fault in round 2:
+
+```bash
+python3 faultsimulator.py -r 2 > sample.txt
+```
 
 ## Examples
 
@@ -289,7 +318,7 @@ Run the analysis:
 With the file [examples/round8_1pair_bitflip_only.txt](./examples/round8_1pair_bitflip_only.txt), **173 candidate keys** are found in **50 seconds** (more than 12 minutes on a single core).
 
 Since the fault position is unknown, the knowledge that a fault is a bitlip is only used for the filtering.
-So the running time shoud be similar to the previous case.
+So the running time should be similar to the previous case.
 
 #### Single ciphertext pair (unknown fault position and value)
 

@@ -10,11 +10,11 @@ static char *DEFAULT_OUTPUT_FILENAME = "keys.txt";
 int main(int argc, char *argv[]) {
   FILE *fp = NULL;
   pair_t pairs[PAIRS_MAX];
-  known_pt_t known_pt;
+  known_pt_ct_t known_pt_ct;
   int i, j, opt, err, nkeys, npairs;
   int mode = -1;
   uint8_t masterkeys[KEYS_MAX][16];
-  char options[] = "89o:i:v";
+  char options[] = "1289o:i:v";
   char *in_fname = NULL;
   char *out_fname = NULL;
 #ifdef _OPENMP
@@ -25,13 +25,32 @@ int main(int argc, char *argv[]) {
   opt = getopt(argc, argv, options);
   while (opt != -1) {
     switch(opt) {
+    case '1':
+      if (mode == -1) {
+        mode = DFA_ROUND_1;
+      }
+      else {
+        fprintf(stderr, "[!] only one of -1, -2, -8 or -9 can be used\n");
+        exit(EXIT_FAILURE);
+      }
+      break;
+
+    case '2':
+      if (mode == -1) {
+        mode = DFA_ROUND_2;
+      }
+      else {
+        fprintf(stderr, "[!] only one of -1, -2, -8 or -9 can be used\n");
+        exit(EXIT_FAILURE);
+      }
+      break;
 
     case '8':
       if (mode == -1) {
         mode = DFA_ROUND_8;
       }
       else {
-        fprintf(stderr, "[!] -8 and -9 cannot be used at the same time\n");
+        fprintf(stderr, "[!] only one of -1, -2, -8 or -9 can be used\n");
         exit(EXIT_FAILURE);
       }
       break;
@@ -41,7 +60,7 @@ int main(int argc, char *argv[]) {
         mode = DFA_ROUND_9;
       }
       else {
-        fprintf(stderr, "[!] -8 and -9 cannot be used at the same time\n");
+        fprintf(stderr, "[!] only one of -1, -2, -8 or -9 can be used\n");
         exit(EXIT_FAILURE);
       }
       break;
@@ -55,7 +74,7 @@ int main(int argc, char *argv[]) {
       break;
 
     case 'v':
-      fprintf(stderr, "dfa-aes 1.0 (MIT License), differential fault analysis of AES\n"
+      fprintf(stderr, "dfa-aes 1.1 (MIT License), differential fault analysis of AES\n"
                       "Copyright (C) 2021-2026 A. Russon\n");
       exit(EXIT_SUCCESS);
 
@@ -68,7 +87,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (mode == -1) {
-    fprintf(stderr, "[!] Option -8 or -9 missing\n");
+    fprintf(stderr, "[!] Option -1, -8 or -9 missing\n");
     exit(EXIT_FAILURE);
   }
 
@@ -82,13 +101,13 @@ int main(int argc, char *argv[]) {
   }
 
   /* load data from file */
-  err = readfile(in_fname, pairs, &npairs, &known_pt);
+  err = readfile(in_fname, pairs, &npairs, &known_pt_ct);
   if (err == -1) {
     fprintf(stderr, "[!] Input file cannot be opened\n");
     exit(EXIT_FAILURE);
   }
 
-  if (known_pt.is_some) {
+  if (known_pt_ct.is_some) {
     fprintf(stderr, "[*] A known plaintext/ciphertext has been provided\n");
   }
 
@@ -99,10 +118,16 @@ int main(int argc, char *argv[]) {
 
   /* launch analysis */
   if (mode == DFA_ROUND_9) {
-    nkeys = r9_key_recovery(pairs, npairs, &known_pt, masterkeys);
+    nkeys = r1_r9_key_recovery(pairs, npairs, &known_pt_ct, false, masterkeys);
+  }
+  else if (mode == DFA_ROUND_8) {
+    nkeys = r2_r8_key_recovery(pairs, npairs, &known_pt_ct, false, masterkeys);
+  }
+  else if (mode == DFA_ROUND_1) {
+    nkeys = r1_r9_key_recovery(pairs, npairs, &known_pt_ct, true, masterkeys);
   }
   else {
-    nkeys = r8_key_recovery(pairs, npairs, &known_pt, masterkeys);
+    nkeys = r2_r8_key_recovery(pairs, npairs, &known_pt_ct, true, masterkeys);
   }
 
   if (nkeys == 0) {
@@ -110,7 +135,7 @@ int main(int argc, char *argv[]) {
   }
   else {
     if (nkeys == 1) {
-      if (known_pt.is_some) {
+      if (known_pt_ct.is_some) {
         fprintf(stderr, "[*] Master key found:\n");
       }
       else {

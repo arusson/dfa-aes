@@ -22,6 +22,25 @@ sbox = [
     0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
 ]
 
+invsbox = [
+    0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
+    0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
+    0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
+    0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
+    0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
+    0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
+    0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
+    0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
+    0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
+    0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
+    0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
+    0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
+    0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
+    0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
+    0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
+    0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d,
+]
+
 rcon = [0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36]
 
 def xtime(a):
@@ -47,18 +66,46 @@ def mixcolumn(b):
     v = xtime(v)
     b[3] = b[3] ^ v ^ t
 
+def invmixcolumn(b):
+    # preprocessing
+    u = b[0] ^ b[2]
+    u = xtime(u)
+    u = xtime(u)
+    v = b[1] ^ b[3]
+    v = xtime(v)
+    v = xtime(v)
+    b[0] ^= u
+    b[1] ^= v
+    b[2] ^= u
+    b[3] ^= v
+
+    mixcolumn(b)
+
 def MC(state):
     for col in state:
         mixcolumn(col)
+
+def iMC(state):
+    for col in state:
+        invmixcolumn(col)
 
 def SR(state):
     state[0][1], state[1][1], state[2][1], state[3][1] = state[1][1], state[2][1], state[3][1], state[0][1]
     state[0][2], state[1][2], state[2][2], state[3][2] = state[2][2], state[3][2], state[0][2], state[1][2]
     state[0][3], state[1][3], state[2][3], state[3][3] = state[3][3], state[0][3], state[1][3], state[2][3]
 
+def iSR(state):    
+    state[0][1], state[1][1], state[2][1], state[3][1] = state[3][1], state[0][1], state[1][1], state[2][1]
+    state[0][2], state[1][2], state[2][2], state[3][2] = state[2][2], state[3][2], state[0][2], state[1][2]
+    state[0][3], state[1][3], state[2][3], state[3][3] = state[1][3], state[2][3], state[3][3], state[0][3]
+
 def SB(state):
     for i in range(4):
         state[i] = [sbox[b] for b in state[i]]
+
+def iSB(state):
+    for i in range(4):
+        state[i] = [invsbox[b] for b in state[i]]
 
 def AK(state, roundkeys, rnd):
     for i in range(4):
@@ -81,7 +128,7 @@ def key_expansion(masterkey):
 def encrypt_aes(plaintext, masterkey, fault_round=-1, fault_pos=-1, fault=-1):
     roundkeys = key_expansion(masterkey)
 
-    state = [plaintext[i:i+4] for i in range(0,16,4)]
+    state = [plaintext[i:i+4] for i in range(0, 16, 4)]
     AK(state, roundkeys, 0)
 
     # round 1 to nr-1
@@ -90,7 +137,6 @@ def encrypt_aes(plaintext, masterkey, fault_round=-1, fault_pos=-1, fault=-1):
         SR(state)
         if rnd == fault_round:
             state[fault_pos // 4][fault_pos % 4] ^= fault
-
         MC(state)
         AK(state, roundkeys, rnd)
 
@@ -101,15 +147,94 @@ def encrypt_aes(plaintext, masterkey, fault_round=-1, fault_pos=-1, fault=-1):
 
     return bytes([state[i][j] for i in range(4) for j in range(4)])
 
+def decrypt_aes(ciphertext, masterkey, fault_round=-1, fault_pos=-1, fault=-1):
+    roundkeys = key_expansion(masterkey)
+
+    # last round
+    state = [ciphertext[i:i+4] for i in range(0,16,4)]
+    AK(state, roundkeys, 10)
+    iSR(state)
+    iSB(state)
+
+    for rnd in range(9, 0, -1):
+        AK(state, roundkeys, rnd)
+        if rnd == fault_round:
+            state[fault_pos // 4][fault_pos % 4] ^= fault
+        iMC(state)
+        iSR(state)
+        iSB(state)
+    
+    AK(state, roundkeys, 0)
+
+    return bytes([state[i][j] for i in range(4) for j in range(4)])
+
+def eq_key_expansion(masterkey):
+    roundkeys = [masterkey[i:i+4] for i in range(0, 16, 4)]
+    for rnd in range(10):
+        for j in range(4):
+            tmp = roundkeys[-1].copy()
+            if j == 0:
+                tmp = tmp[1:] + tmp[:1]
+                tmp = [sbox[t] for t in tmp]
+                tmp[0] ^= rcon[rnd]
+            roundkeys.append([tmp[i] ^ roundkeys[rnd*4 + j][i] for i in range(4)])
+    for i in range(4, 40):
+        invmixcolumn(roundkeys[i])
+    return roundkeys
+
+def eq_decrypt_aes(ciphertext, masterkey, fault_round=-1, fault_pos=-1, fault=-1):
+    roundkeys = eq_key_expansion(masterkey)
+
+    state = [ciphertext[i:i+4] for i in range(0, 16, 4)]
+    AK(state, roundkeys, 10)
+
+    # round nr to 2
+    for rnd in range(9, 0, -1):
+        iSB(state)
+        iSR(state)
+        if rnd == fault_round:
+            state[fault_pos // 4][fault_pos % 4] ^= fault
+        iMC(state)
+        AK(state, roundkeys, rnd)
+    
+    # last round
+    iSB(state)
+    iSR(state)
+    AK(state, roundkeys, 0)
+
+    return bytes([state[i][j] for i in range(4) for j in range(4)])
+
+def generate_fault(bitflip, pos_min=0, pos_max=15):
+    position = randint(pos_min, pos_max)
+    if bitflip:
+        fault = 1 << randint(0, 7)
+    else:
+        fault = randint(1, 255)
+    return fault, position
+
+def print_result(block, fblock, keeppos, fault_pos, keepfault, fault, bitflip):
+    s = f'{block.hex()},{fblock.hex()}'
+    if keeppos:
+        s += f',{fault_pos}'
+    if bitflip:
+        if not args.keeppos:
+            s += ',-1'
+        s += ',b'
+    elif args.keepfault:
+        if not args.keeppos:
+            s += ',-1'
+        s += f',{fault}'
+    print(s)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='AES fault simulator')
     parser.add_argument(
         '-r', action='store', dest='rnd', type=int,
-        help='Round where the fault is made (8 or 9)', required=True
+        help='Round where the fault is made (8 or 9 for encryption, 1 or 2 for decryption)', required=True
     )
     parser.add_argument(
         '-n', action='store', dest='n', type=int, default=1,
-        help='Number of sets of four correct/faulty ciphertexts in "-r 9" mode, and number of correct/faulty ciphertexts in "-r 8" mode'
+        help='Number of sets of four correct/faulty ciphertexts in "-r 9" mode ("-r 1" for decryption), and number of correct/faulty ciphertexts (or plaintext) in "-r 8" mode ("-r 2" for decryption)'
     )
     parser.add_argument(
         '--keeppos', action='store_true', dest='keeppos', default=False,
@@ -129,10 +254,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.rnd not in [8, 9]:
+    if args.rnd not in [1, 2, 8, 9]:
+        print('Error: option "-n" should be 1 or 2 (fault in decryption) or 8 or 9 (fault in encryption)')
         sys.exit()
 
     if args.n < 1:
+        print('Error: option "-n" should be at least 1')
         sys.exit()
 
     # generate master key and pair of correct plaintext/ciphertext
@@ -148,55 +275,37 @@ if __name__ == "__main__":
     else:
         print(f'# pt:{pt0.hex()}\n# ct:{ct0.hex()}\n')
 
-    print('# pairs of good/faulty ciphertexts')
+    print('# pairs of good/faulty ciphertexts or plaintexts')
     # generate pairs of correct/faulty ciphertexts
     if args.rnd == 8:
         for i in range(args.n):
             pt = [randint(0, 255) for i in range(16)]
-            fault_pos = randint(0, 15)
-            if args.bitflip:
-                fault = 1 << randint(0, 7)
-            else:
-                fault = randint(1, 255)
-
+            fault, fault_pos = generate_fault(args.bitflip)
             ct = bytes(encrypt_aes(pt, masterkey))
             fct = bytes(encrypt_aes(pt, masterkey, 8, fault_pos, fault))
-
-            s = f'{ct.hex()},{fct.hex()}'
-            if args.keeppos:
-                s += f',{fault_pos}'
-            if args.bitflip:
-                if not args.keeppos:
-                    s += ',-1'
-                s += ',b'
-            elif args.keepfault:
-                if not args.keeppos:
-                    s += ',-1'
-                s += f',{fault}'
-            print(s)
-    else:
+            print_result(ct, fct, args.keeppos, fault_pos, args.keepfault, fault, args.bitflip)
+    elif args.rnd == 9:
         for i in range(args.n):
             # four pairs with a fault in a different column
             for j in range(4):
-                fault_pos = randint(4*j, 4*j + 3)
-                if args.bitflip:
-                    fault = 1 << randint(0, 7)
-                else:
-                    fault = randint(1, 255)
-
+                fault, fault_pos = generate_fault(args.bitflip, 4*j, 4*j + 3)
                 pt = [randint(0, 255) for i in range(16)]
                 ct = bytes(encrypt_aes(pt, masterkey))
                 fct = bytes(encrypt_aes(pt, masterkey, 9, fault_pos, fault))
-
-                s = f'{ct.hex()},{fct.hex()}'
-                if args.keeppos:
-                    s += f',{fault_pos}'
-                if args.bitflip:
-                    if not args.keeppos:
-                        s += ',-1'
-                    s += ',b'
-                elif args.keepfault:
-                    if not args.keeppos:
-                        s += ',-1'
-                    s += f',{fault}'
-                print(s)
+                print_result(ct, fct, args.keeppos, fault_pos, args.keepfault, fault, args.bitflip)
+    elif args.rnd == 2:
+        for i in range(args.n):
+            ct = [randint(0, 255) for i in range(16)]
+            fault, fault_pos = generate_fault(args.bitflip)
+            pt = bytes(decrypt_aes(ct, masterkey))
+            fpt = bytes(decrypt_aes(ct, masterkey, 2, fault_pos, fault))
+            print_result(pt, fpt, args.keeppos, fault_pos, args.keepfault, fault, args.bitflip)
+    elif args.rnd == 1:
+        for i in range(args.n):
+            # four pairs with a fault in a different column
+            for j in range(4):
+                fault, fault_pos = generate_fault(args.bitflip, 4*j, 4*j + 3)
+                ct = [randint(0, 255) for i in range(16)]
+                pt = bytes(decrypt_aes(ct, masterkey))
+                fpt = bytes(decrypt_aes(ct, masterkey, 1, fault_pos, fault))
+                print_result(pt, fpt, args.keeppos, fault_pos, args.keepfault, fault, args.bitflip)

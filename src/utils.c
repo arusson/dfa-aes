@@ -65,7 +65,8 @@ static int hex_to_bytes(const char *a, const int alen, uint8_t *b, const int ble
 /**
  * This function parses the input file.
  */
-int readfile(const char *filename, pair_t pairs[PAIRS_MAX], int *npairs, known_pt_t *known_pt) {
+int readfile(const char *filename, pair_t pairs[PAIRS_MAX], int *npairs,
+             known_pt_ct_t *known_pt_ct) {
   FILE *fp;
   int err = -1;
   int n;
@@ -92,7 +93,7 @@ int readfile(const char *filename, pair_t pairs[PAIRS_MAX], int *npairs, known_p
 
     if (buffer[0] == 'p' && buffer[1] == 't' && buffer[2] == ':' && !has_pt) {
       /* load known plaintext */
-      err = hex_to_bytes(buffer + 3, n - 3, known_pt->pt, 16);
+      err = hex_to_bytes(buffer + 3, n - 3, known_pt_ct->pt, 16);
       if (err != 0) {
         fprintf(stderr, "[!] Malformed input for known plaintext on line %d\n", num_line);
         exit(EXIT_FAILURE);
@@ -101,7 +102,7 @@ int readfile(const char *filename, pair_t pairs[PAIRS_MAX], int *npairs, known_p
     }
     else if (buffer[0] == 'c' && buffer[1] == 't' && buffer[2] == ':' && !has_ct) {
       /* load ciphertext of known plaintext */
-      err = hex_to_bytes(buffer + 3, n - 3, known_pt->ct, 16);
+      err = hex_to_bytes(buffer + 3, n - 3, known_pt_ct->ct, 16);
       if (err != 0) {
         fprintf(
           stderr,
@@ -167,14 +168,14 @@ int readfile(const char *filename, pair_t pairs[PAIRS_MAX], int *npairs, known_p
 
   if (has_pt && !has_ct) {
     fprintf(stderr, "[!] Known plaintext ignored (corresponding ciphertext is absent)\n");
-    known_pt->is_some = false;
+    known_pt_ct->is_some = false;
   }
   else if (!has_pt && has_ct) {
     fprintf(stderr, "[!] Ciphertext ignored (corresponding known plaintext absent)\n");
-    known_pt->is_some = false;
+    known_pt_ct->is_some = false;
   }
   else {
-    known_pt->is_some = has_pt;
+    known_pt_ct->is_some = has_pt;
     if (has_pt) {
       fprintf(stderr, "[*] Known plaintext/ciphertext provided\n");
     }
@@ -226,36 +227,48 @@ void print_pair_info(const pair_t *pair) {
   }
 }
 
-void print_number_candidates_line(const int num, const int col) {
-  if (col == 0) {
-    fprintf(stderr, "[*] %d candidate(s) for positions 0, 13, 10, 7\n", num);
-  }
-  else if (col == 1) {
-    fprintf(stderr, "[*] %d candidate(s) for positions 4, 1, 14, 11\n", num);
-  }
-  else if (col == 2) {
-    fprintf(stderr, "[*] %d candidate(s) for positions 8, 5, 2, 15\n", num);
+void print_number_candidates_line(const int num, const int col, const bool decrypt) {
+  const int (*positions)[4];
+
+  if (decrypt == true) {
+    positions = POSITIONS_FIRST_ROUND;
   }
   else {
-    fprintf(stderr, "[*] %d candidate(s) for positions 12, 9, 6, 3\n", num);
+    positions = POSITIONS_LAST_ROUND;
   }
+
+  fprintf(stderr,
+          "[*] %d candidate(s) for positions %d, %d, %d, %d\n",
+            num, positions[col][0], positions[col][1], positions[col][2], positions[col][3]);
 }
 
 static int bit_length(const long a) {
-    return 64 - __builtin_clzl((unsigned long)a);
+  return 64 - __builtin_clzl((unsigned long)a);
 }
 
-void print_number_candidates(const int candidates_len[4], const long nb_cand) {
-  fprintf(
-    stderr,
-    "[*] Number of candidates for each position:\n"
-    "  |x| | | |    | |x| | |    | | |x| |    | | | |x|\n"
-    "  | | | |x|    |x| | | |    | |x| | |    | | |x| |\n"
-    "  | | |x| |    | | | |x|    |x| | | |    | |x| | |\n"
-    "  | |x| | |    | | |x| |    | | | |x|    |x| | | |\n"
-    "    %4d         %4d         %4d         %4d\n"
-    "[*] Number of master key candidates: %ld (< 2^%d)\n",
-    candidates_len[0], candidates_len[1], candidates_len[2], candidates_len[3],
-    nb_cand, bit_length(nb_cand)
-  );
+void print_number_candidates(const int candidates_len[4], const long nb_cand, const bool decrypt) {
+  if (decrypt == true) {
+    fprintf(stderr,
+            "[*] Number of candidates for each position:\n"
+            "  |x| | | |    | |x| | |    | | |x| |    | | | |x|\n"
+            "  | |x| | |    | | |x| |    | | | |x|    |x| | | |\n"
+            "  | | |x| |    | | | |x|    |x| | | |    | |x| | |\n"
+            "  | | | |x|    |x| | | |    | |x| | |    | | |x| |\n"
+            "    %4d         %4d         %4d         %4d\n"
+            "[*] Number of master key candidates: %ld (< 2^%d)\n",
+            candidates_len[0], candidates_len[1], candidates_len[2], candidates_len[3],
+            nb_cand, bit_length(nb_cand));
+  }
+  else {
+    fprintf(stderr,
+            "[*] Number of candidates for each position:\n"
+            "  |x| | | |    | |x| | |    | | |x| |    | | | |x|\n"
+            "  | | | |x|    |x| | | |    | |x| | |    | | |x| |\n"
+            "  | | |x| |    | | | |x|    |x| | | |    | |x| | |\n"
+            "  | |x| | |    | | |x| |    | | | |x|    |x| | | |\n"
+            "    %4d         %4d         %4d         %4d\n"
+            "[*] Number of master key candidates: %ld (< 2^%d)\n",
+            candidates_len[0], candidates_len[1], candidates_len[2], candidates_len[3],
+            nb_cand, bit_length(nb_cand));
+  }
 }
