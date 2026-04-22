@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
   int i, j, opt, err, nkeys, npairs;
   int mode = -1;
   uint8_t masterkeys[KEYS_MAX][16];
-  char options[] = "89o:i:";
+  char options[] = "89o:i:v";
   char *in_fname = NULL;
   char *out_fname = NULL;
 #ifdef _OPENMP
@@ -53,6 +53,11 @@ int main(int argc, char *argv[]) {
     case 'o':
       out_fname = optarg;
       break;
+
+    case 'v':
+      fprintf(stderr, "dfa-aes 1.0 (MIT License), differential fault analysis of AES\n"
+                      "Copyright (C) 2021-2026 A. Russon\n");
+      exit(EXIT_SUCCESS);
 
     case '?':
       fprintf(stderr, "[!] Options are missing\n");

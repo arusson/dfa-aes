@@ -11,7 +11,7 @@ For each case, it is possible to specify the *fault location* and/or the *fault 
 In the case of the fault in the **8th round**, this program is very **efficient** for key recovery with a **single fault**:
 depending of the assumption on the fault, it can find the key immediately, or in less than a minute if nothing is known.
 
-## Update 2025.01.04
+## Update 2025.01.04 (version 1.0)
 
 A lot of changes has been made:
 - use os **AES-NI** instructions to reduce drastically the cost (now, a few seconds can suffice to find a key with a single ciphertext pair for the 8th round fault);
